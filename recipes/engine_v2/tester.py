@@ -7,6 +7,9 @@
 This recipe is used to run tests using prebuilt artifacts.
 """
 
+from PB.recipes.flutter.engine.engine import InputProperties
+from PB.recipes.flutter.engine.engine import EnvProperties
+
 DEPS = [
     'flutter/flutter_deps',
     'flutter/monorepo',
@@ -21,6 +24,9 @@ DEPS = [
     'recipe_engine/properties',
     'recipe_engine/step',
 ]
+
+PROPERTIES = InputProperties
+ENV_PROPERTIES = EnvProperties
 
 SAMPLE_MONOREPO_COMMITS = {
     "engine/src/flutter": "57ac2d3d67bde512ed071d0250bfdcb986142ea4",
@@ -41,7 +47,7 @@ def get_monorepo_framework(api):
   return commits['flutter']
 
 
-def RunSteps(api):
+def RunSteps(api, properties, env_properties):
   # Collect memory/cpu/process before task execution.
   api.os_utils.collect_os_info()
   builder = api.path['cache'].join('builder')
@@ -95,7 +101,6 @@ def RunSteps(api):
   api.os_utils.kill_processes()
   # Collect memory/cpu/process after task execution.
   api.os_utils.collect_os_info()
-
 
 def GenTests(api):
   build = {'shard': 'framework_coverage'}

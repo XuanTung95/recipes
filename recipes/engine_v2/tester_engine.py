@@ -51,6 +51,8 @@ import copy
 from contextlib import contextmanager
 
 from google.protobuf import struct_pb2
+from PB.recipes.flutter.engine.engine import InputProperties
+from PB.recipes.flutter.engine.engine import EnvProperties
 from PB.go.chromium.org.luci.buildbucket.proto import build as build_pb2
 
 DEPS = [
@@ -70,6 +72,9 @@ DEPS = [
     'recipe_engine/properties',
     'recipe_engine/step',
 ]
+
+PROPERTIES = InputProperties
+ENV_PROPERTIES = EnvProperties
 
 
 def run_tests(api, test, checkout, env, env_prefixes):
@@ -120,7 +125,6 @@ def run_tests(api, test, checkout, env, env_prefixes):
   # Collect memory/cpu/process after task execution.
   api.os_utils.collect_os_info()
 
-
 def Test(api, checkout, env, env_prefixes):
   """Runs a global test using prebuilts."""
   test = api.properties.get('build')
@@ -129,7 +133,7 @@ def Test(api, checkout, env, env_prefixes):
     run_tests(api, test, checkout, env, env_prefixes)
 
 
-def RunSteps(api):
+def RunSteps(api, properties, env_properties):
   # Sets the engine environment and checkouts the source code.
   checkout = api.path['cache'].join('builder', 'src')
   api.file.rmtree('Clobber build output', checkout.join('out'))

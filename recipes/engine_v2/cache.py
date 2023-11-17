@@ -2,6 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from PB.recipes.flutter.engine.engine import InputProperties
+from PB.recipes.flutter.engine.engine import EnvProperties
+
 DEPS = [
     'flutter/cache',
     'flutter/repo_util',
@@ -11,8 +14,11 @@ DEPS = [
     'recipe_engine/json',
 ]
 
+PROPERTIES = InputProperties
+ENV_PROPERTIES = EnvProperties
 
-def RunSteps(api):
+
+def RunSteps(api, properties, env_properties):
   # Sets the engine environment and checkouts the source code.
   checkout = api.path['cache'].join('builder', 'src')
   api.file.rmtree('Clobber build output', checkout.join('out'))
