@@ -1,7 +1,9 @@
 # Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
+import traceback
+import shutil
+import os
 from contextlib import contextmanager
 
 from PB.recipes.flutter.engine.engine import InputProperties
@@ -20,7 +22,7 @@ DEPS = [
     'flutter/display_util',
     'flutter/flutter_bcid',
     'flutter/flutter_deps',
-    'flutter/goma',
+#    'flutter/goma',
     'flutter/logs_util',
     'flutter/os_utils',
     'flutter/osx_sdk',
@@ -73,6 +75,14 @@ MOCK_POM_PATH = (
 # Used for mock paths
 DIRECTORY = 'DIRECTORY'
 
+def CopyFile(src, dst):
+    dst_dir = os.path.dirname(dst)
+    os.makedirs(dst_dir, exist_ok=True)
+    try:
+        shutil.copy(src, dst)
+        print(f"File copied successfully from {src} to {dst}.")
+    except Exception as e:
+        print(f"Error occurred while copying file: {e}")
 
 def UploadArtifact(api, config, platform, artifact_name):
   path = GetCheckoutPath(api).join(
@@ -80,11 +90,14 @@ def UploadArtifact(api, config, platform, artifact_name):
   )
   api.path.mock_add_file(path)
   assert api.path.exists(path), '%s does not exist' % str(path)
-  if not api.flutter_bcid.is_prod_build():
-    return
+  # if not api.flutter_bcid.is_prod_build():
+  #   return
   dst = '%s/%s' % (platform, artifact_name) if platform else artifact_name
-  api.bucket_util.safe_upload(path, GetCloudPath(api, dst))
-
+  # api.bucket_util.pw(path, GetCloudPath(api, dst))
+  engine_out_path = api.path['cache'].join('custom_engine')
+  target_path = '%s/flutter_infra_release/%s' % (engine_out_path, GetCloudPath(api, dst))
+  print("UploadArtifact from %s to %s " % (path, target_path))
+  CopyFile(str(path), str(target_path))
 
 def UploadToDownloadFlutterIO(api, config):
   src = GetCheckoutPath(api).join(
@@ -92,8 +105,8 @@ def UploadToDownloadFlutterIO(api, config):
   )
   api.path.mock_add_file(src)
   assert api.path.exists(src), '%s does not exist' % str(src)
-  if not api.flutter_bcid.is_prod_build():
-    return
+  # if not api.flutter_bcid.is_prod_build():
+  #   return
   paths = api.file.listdir(
       'Expand directory',
       src,
@@ -102,21 +115,34 @@ def UploadToDownloadFlutterIO(api, config):
   )
   paths = [api.path.abspath(p) for p in paths]
   experimental = 'experimental' if api.runtime.is_experimental else ''
+  engine_out_path = api.path['cache'].join('custom_engine')
   for path in paths:
     dst_list = [
         'gs://download.flutter.io', experimental,
         str(path).split('download.flutter.io/')[1]
     ]
     dst = '/'.join(filter(bool, dst_list))
-    api.archives.upload_artifact(path, dst)
-
+    # api.archives.upload_artifact(path, dst)
+    target_path = '%s/download.flutter.io/%s' % (str(engine_out_path), str(path).split('download.flutter.io/')[1])
+    print("UploadToDownloadFlutterIO from " + str(path) + " to " + str(dst))
+    CopyFile(str(path), str(target_path))
+  # Copy maven-metadata.xml file
+  io_flutter_path = GetCheckoutPath(api).join(
+      'out', config, 'zip_archives', 'download.flutter.io', 'io', 'flutter'
+  )
+  subdirectories = [d for d in os.listdir(str(io_flutter_path)) if os.path.isdir(os.path.join(str(io_flutter_path), d))]
+  for subdir in subdirectories:
+    metadata_file_path = GetCheckoutPath(api).join('out', config, subdir + '.maven-metadata.xml')
+    destination_path = '%s/download.flutter.io/io/flutter/%s/maven-metadata.xml' % (str(engine_out_path), str(subdir))
+    CopyFile(str(metadata_file_path), str(destination_path))
 
 def GetCheckoutPath(api):
   return api.path['cache'].join('builder', 'src')
 
 
 def GetCloudPath(api, path):
-  git_hash = api.buildbucket.gitiles_commit.id
+  # git_hash = api.buildbucket.gitiles_commit.id
+  git_hash = api.properties['engine_version']
   if api.runtime.is_experimental:
     return 'flutter/experimental/%s/%s' % (git_hash, path)
   return 'flutter/%s/%s' % (git_hash, path)
@@ -129,12 +155,14 @@ def Build(api, config, *targets):
   ninja_path = checkout.join('flutter', 'third_party', 'ninja', 'ninja')
   ninja_args = [ninja_path, '-j', goma_jobs, '-C', build_dir]
   ninja_args.extend(targets)
-  with api.goma(), api.depot_tools.on_path():
+  with api.depot_tools.on_path():
     name = 'build %s' % ' '.join([config] + list(targets))
     api.step(name, ninja_args)
 
 
 def RunTests(api, out_dir, android_out_dir=None, types='all'):
+  print("Skip RunTests")
+  return
   script_path = GetCheckoutPath(api).join('flutter', 'testing', 'run_tests.py')
   # TODO(godofredoc): use .vpython from engine when file are available.
   venv_path = api.depot_tools.root.join('.vpython3')
@@ -150,7 +178,8 @@ def RunTests(api, out_dir, android_out_dir=None, types='all'):
   def run_test():
     # Sometimes tests build artifacts, which will be extremelly slow if it does not run
     # from a goma context.
-    env = {'GOMA_DIR': api.goma.goma_dir}
+    # env = {'GOMA_DIR': api.goma.goma_dir}
+    env = {}
     with api.context(env=env):
       return api.step(step_name, args)
 
@@ -277,12 +306,13 @@ def BuildAndPackageFuchsia(api, build_script, git_rev):
 
 def RunGN(api, *args):
   checkout = GetCheckoutPath(api)
-  gn_cmd = ['python3', checkout.join('flutter/tools/gn'), '--goma']
+  gn_cmd = ['python3', checkout.join('flutter/tools/gn')]
   if api.properties.get('no_lto', False) and '--no-lto' not in args:
     args += ('--no-lto',)
   gn_cmd.extend(args)
   # Run GN with a goma_dir context.
-  env = {'GOMA_DIR': api.goma.goma_dir}
+  # env = {'GOMA_DIR': api.goma.goma_dir}
+  env = {}
   with api.context(env=env):
     api.step('gn %s' % ' '.join(args), gn_cmd)
 
@@ -309,11 +339,15 @@ def UploadArtifacts(
     pkg.zip('Zip %s %s' % (platform, archive_name))
 
     # Do not upload if not running from the prod bucket.
-    if not api.flutter_bcid.is_prod_build():
-      return
+    # if not api.flutter_bcid.is_prod_build():
+    #   return
 
-    api.bucket_util.safe_upload(local_zip, remote_zip)
+    # api.bucket_util.safe_upload(local_zip, remote_zip)
 
+    engine_out_path = api.path['cache'].join('custom_engine')
+    target_path = '%s/flutter_infra_release/%s' % (engine_out_path, remote_zip)
+    print("UploadArtifacts from %s to %s " % (str(local_zip), str(target_path)))
+    CopyFile(str(local_zip), str(target_path))
 
 def VerifyExportedSymbols(api):
   checkout = GetCheckoutPath(api)
@@ -758,6 +792,461 @@ def BuildLinuxAndroidAOT(api, swarming_task_id):
         triple = aot_variant.android_triple
         UploadTreeMap(api, upload_dir, unstripped_lib_flutter_path, triple)
 
+def BuildMacAndroidAOT(api, swarming_task_id):
+  # Build and upload engines for the runtime modes that use AOT compilation.
+  # Do arm64 first because we have more tests for that one, and can bail out
+  # earlier if they fail.
+  aot_variants = [
+      AndroidAotVariant(
+          android_cpu='arm64',
+          out_dir='android_profile_arm64',
+          artifact_dir='android-arm64-profile',
+          clang_dir='clang_x64',
+          android_triple='aarch64-linux-android',
+          abi='arm64_v8a',
+          gn_args=[
+              '--runtime-mode', 'profile', '--android', '--android-cpu', 'arm64'
+          ],
+          ninja_targets=[
+              'default', 'clang_x64/gen_snapshot',
+              'flutter/shell/platform/android:abi_jars',
+#              'flutter/shell/platform/android:analyze_snapshot'
+          ]
+      ),
+      AndroidAotVariant(
+          android_cpu='arm64',
+          out_dir='android_release_arm64',
+          artifact_dir='android-arm64-release',
+          clang_dir='clang_x64',
+          android_triple='aarch64-linux-android',
+          abi='arm64_v8a',
+          gn_args=[
+              '--runtime-mode', 'release', '--android', '--android-cpu', 'arm64'
+          ],
+          ninja_targets=[
+              'default', 'clang_x64/gen_snapshot',
+              'flutter/shell/platform/android:abi_jars',
+#              'flutter/shell/platform/android:analyze_snapshot'
+          ]
+      ),
+      AndroidAotVariant(
+          android_cpu='arm',
+          out_dir='android_profile',
+          artifact_dir='android-arm-profile',
+          clang_dir='clang_x64',
+          android_triple='arm-linux-androideabi',
+          abi='armeabi_v7a',
+          gn_args=[
+              '--runtime-mode', 'profile', '--android', '--android-cpu', 'arm'
+          ],
+          ninja_targets=[
+              'default', 'clang_x64/gen_snapshot',
+              'flutter/shell/platform/android:embedding_jars',
+              'flutter/shell/platform/android:abi_jars'
+          ]
+      ),
+      AndroidAotVariant(
+          android_cpu='arm',
+          out_dir='android_release',
+          artifact_dir='android-arm-release',
+          clang_dir='clang_x64',
+          android_triple='arm-linux-androideabi',
+          abi='armeabi_v7a',
+          gn_args=[
+              '--runtime-mode', 'release', '--android', '--android-cpu', 'arm'
+          ],
+          ninja_targets=[
+              'default', 'clang_x64/gen_snapshot',
+              'flutter/shell/platform/android:embedding_jars',
+              'flutter/shell/platform/android:abi_jars'
+          ]
+      ),
+      AndroidAotVariant(
+          android_cpu='x64',
+          out_dir='android_profile_x64',
+          artifact_dir='android-x64-profile',
+          clang_dir='clang_x64',
+          android_triple='x86_64-linux-android',
+          abi='x86_64',
+          gn_args=[
+              '--runtime-mode', 'profile', '--android', '--android-cpu', 'x64'
+          ],
+          ninja_targets=[
+              'default', 'clang_x64/gen_snapshot',
+              'flutter/shell/platform/android:abi_jars',
+#              'flutter/shell/platform/android:analyze_snapshot'
+          ]
+      ),
+      AndroidAotVariant(
+          android_cpu='x64',
+          out_dir='android_release_x64',
+          artifact_dir='android-x64-release',
+          clang_dir='clang_x64',
+          android_triple='x86_64-linux-android',
+          abi='x86_64',
+          gn_args=[
+              '--runtime-mode', 'release', '--android', '--android-cpu', 'x64'
+          ],
+          ninja_targets=[
+              'default', 'clang_x64/gen_snapshot',
+              'flutter/shell/platform/android:abi_jars',
+#              'flutter/shell/platform/android:analyze_snapshot'
+          ]
+      ),
+  ]
+
+  # Build all aot_variants
+  for aot_variant in aot_variants:
+    RunGN(api, *(aot_variant.GetGNArgs()))
+    Build(
+        api, aot_variant.GetBuildOutDir(),
+        *(aot_variant.GetNinjaTargets())
+    )
+
+  # Explicitly upload artifacts.
+
+  # Artifacts.zip
+  UploadArtifact(
+      api,
+      config='android_profile',
+      platform='android-arm-profile',
+      artifact_name='artifacts.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_profile_x64',
+      platform='android-x64-profile',
+      artifact_name='artifacts.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_profile_arm64',
+      platform='android-arm64-profile',
+      artifact_name='artifacts.zip'
+  )
+
+  UploadArtifact(
+      api,
+      config='android_release',
+      platform='android-arm-release',
+      artifact_name='artifacts.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_release_x64',
+      platform='android-x64-release',
+      artifact_name='artifacts.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_release_arm64',
+      platform='android-arm64-release',
+      artifact_name='artifacts.zip'
+  )
+
+  # darwin-x64.zip.
+  UploadArtifact(
+      api,
+      config='android_profile',
+      platform='android-arm-profile',
+      artifact_name='darwin-x64.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_profile_x64',
+      platform='android-x64-profile',
+      artifact_name='darwin-x64.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_profile_arm64',
+      platform='android-arm64-profile',
+      artifact_name='darwin-x64.zip'
+  )
+
+  UploadArtifact(
+      api,
+      config='android_release',
+      platform='android-arm-release',
+      artifact_name='darwin-x64.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_release_x64',
+      platform='android-x64-release',
+      artifact_name='darwin-x64.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_release_arm64',
+      platform='android-arm64-release',
+      artifact_name='darwin-x64.zip'
+  )
+
+  # Symbols.zip
+  UploadArtifact(
+      api,
+      config='android_profile',
+      platform='android-arm-profile',
+      artifact_name='symbols.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_profile_x64',
+      platform='android-x64-profile',
+      artifact_name='symbols.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_profile_arm64',
+      platform='android-arm64-profile',
+      artifact_name='symbols.zip'
+  )
+
+  UploadArtifact(
+      api,
+      config='android_release',
+      platform='android-arm-release',
+      artifact_name='symbols.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_release_x64',
+      platform='android-x64-release',
+      artifact_name='symbols.zip'
+  )
+  UploadArtifact(
+      api,
+      config='android_release_arm64',
+      platform='android-arm64-release',
+      artifact_name='symbols.zip'
+  )
+
+  # analyze-snapshot-linux-x64.zip
+  # UploadArtifact(
+  #     api,
+  #     config='android_profile_x64',
+  #     platform='android-x64-profile',
+  #     artifact_name='analyze-snapshot-linux-x64.zip'
+  # )
+  # UploadArtifact(
+  #     api,
+  #     config='android_profile_arm64',
+  #     platform='android-arm64-profile',
+  #     artifact_name='analyze-snapshot-linux-x64.zip'
+  # )
+  #
+  # UploadArtifact(
+  #     api,
+  #     config='android_release_x64',
+  #     platform='android-x64-release',
+  #     artifact_name='analyze-snapshot-linux-x64.zip'
+  # )
+  # UploadArtifact(
+  #     api,
+  #     config='android_release_arm64',
+  #     platform='android-arm64-release',
+  #     artifact_name='analyze-snapshot-linux-x64.zip'
+  # )
+
+  # Jar, pom, embedding files.
+  UploadToDownloadFlutterIO(api, 'android_profile')
+  UploadToDownloadFlutterIO(api, 'android_profile_x64')
+  UploadToDownloadFlutterIO(api, 'android_profile_arm64')
+
+  UploadToDownloadFlutterIO(api, 'android_release')
+  UploadToDownloadFlutterIO(api, 'android_release_x64')
+  UploadToDownloadFlutterIO(api, 'android_release_arm64')
+
+  for aot_variant in aot_variants:
+    upload_dir = aot_variant.GetUploadDir()
+    with api.step.nest('Upload artifacts %s' % upload_dir):
+      # Paths in AndroidAotVariant do not prefix build_dir
+      # that is expected when uploading artifacts.
+      def prefix_build_dir(path):
+        build_dir = aot_variant.GetBuildOutDir()
+        return 'out/%s/%s' % (build_dir, path)
+
+      unstripped_lib_flutter_path = prefix_build_dir(
+          aot_variant.GetLibFlutterPath()
+      )
+
+      if aot_variant.GetBuildOutDir() in ['android_release_arm64',
+                                          'android_release']:
+        triple = aot_variant.android_triple
+        # TODO: Skip UploadTreeMap step for now
+        # UploadTreeMap(api, upload_dir, unstripped_lib_flutter_path, triple)
+
+def BuildMacAndroid(api, swarming_task_id):
+  if api.properties.get('build_android_jit_release', True):
+    RunGN(api, '--android', '--android-cpu=x86', '--runtime-mode=jit_release')
+    Build(
+        api, 'android_jit_release_x86', 'flutter',
+        'flutter/shell/platform/android:abi_jars',
+        'flutter/shell/platform/android:embedding_jars',
+        'flutter/shell/platform/android:robolectric_tests'
+    )
+
+    # Upload artifacts.zip
+    UploadArtifact(
+        api,
+        config='android_jit_release_x86',
+        platform='android-x86-jit-release',
+        artifact_name='artifacts.zip'
+    )
+    RunTests(
+        api,
+        'android_jit_release_x86',
+        android_out_dir='android_jit_release_x86',
+        types='java'
+    )
+
+  if api.properties.get('build_android_debug', True):
+    debug_variants = [
+        # AndroidAotVariant(
+        #     android_cpu='x86',
+        #     out_dir='android_debug_x86',
+        #     artifact_dir='android-x86',
+        #     clang_dir='',
+        #     android_triple='',
+        #     abi='x86',
+        #     gn_args=['--android', '--android-cpu=x86', '--no-lto'],
+        #     ninja_targets=[
+        #         'flutter', 'flutter/shell/platform/android:abi_jars',
+        #         'flutter/shell/platform/android:robolectric_tests'
+        #     ]
+        # ),
+        AndroidAotVariant(
+            android_cpu='x64',
+            out_dir='android_debug_x64',
+            artifact_dir='android-x64',
+            clang_dir='',
+            android_triple='',
+            abi='x86_64',
+            gn_args=['--android', '--android-cpu=x64', '--no-lto'],
+            ninja_targets=[
+                'flutter', 'flutter/shell/platform/android:abi_jars'
+            ]
+        ),
+        AndroidAotVariant(
+            android_cpu='arm',
+            out_dir='android_debug',
+            artifact_dir='android-arm',
+            clang_dir='',
+            android_triple='',
+            abi='armeabi_v7a',
+            gn_args=['--android', '--android-cpu=arm', '--no-lto'],
+            ninja_targets=[
+                'flutter', 'flutter/sky/dist:zip_old_location',
+                'flutter/shell/platform/android:embedding_jars',
+                'flutter/shell/platform/android:abi_jars'
+            ]
+        ),
+        AndroidAotVariant(
+            android_cpu='arm64',
+            out_dir='android_debug_arm64',
+            artifact_dir='android-arm64',
+            clang_dir='',
+            android_triple='',
+            abi='arm64_v8a',
+            gn_args=['--android', '--android-cpu=arm64', '--no-lto'],
+            ninja_targets=[
+                'flutter', 'flutter/shell/platform/android:abi_jars'
+            ]
+        )
+    ]
+    for debug_variant in debug_variants:
+      RunGN(api, *(debug_variant.GetGNArgs()))
+      Build(
+          api, debug_variant.GetBuildOutDir(),
+          *(debug_variant.GetNinjaTargets())
+      )
+
+    # Run tests
+    # RunGN(api, '--android', '--unoptimized', '--runtime-mode=debug', '--no-lto')
+    # Build(
+    #     api, 'android_debug', 'flutter/shell/platform/android:robolectric_tests'
+    # )
+    # RunTests(
+    #     api, 'android_debug', android_out_dir='android_debug', types='java'
+    # )
+
+    # Explicitly upload artifacts.
+
+    # Artifacts.zip
+    # UploadArtifact(
+    #     api,
+    #     config='android_debug_x86',
+    #     platform='android-x86',
+    #     artifact_name='artifacts.zip'
+    # )
+    UploadArtifact(
+        api,
+        config='android_debug_x64',
+        platform='android-x64',
+        artifact_name='artifacts.zip'
+    )
+    UploadArtifact(
+        api,
+        config='android_debug',
+        platform='android-arm',
+        artifact_name='artifacts.zip'
+    )
+    UploadArtifact(
+        api,
+        config='android_debug_arm64',
+        platform='android-arm64',
+        artifact_name='artifacts.zip'
+    )
+
+    # Symbols.zip
+    # UploadArtifact(
+    #     api,
+    #     config='android_debug_x86',
+    #     platform='android-x86',
+    #     artifact_name='symbols.zip'
+    # )
+    UploadArtifact(
+        api,
+        config='android_debug_x64',
+        platform='android-x64',
+        artifact_name='symbols.zip'
+    )
+    UploadArtifact(
+        api,
+        config='android_debug',
+        platform='android-arm',
+        artifact_name='symbols.zip'
+    )
+    UploadArtifact(
+        api,
+        config='android_debug_arm64',
+        platform='android-arm64',
+        artifact_name='symbols.zip'
+    )
+
+    # Jar, pom, embedding files.
+    # UploadToDownloadFlutterIO(api, 'android_debug_x86')
+    UploadToDownloadFlutterIO(api, 'android_debug_x64')
+    UploadToDownloadFlutterIO(api, 'android_debug')  #arm
+    UploadToDownloadFlutterIO(api, 'android_debug_arm64')
+
+    # Additional artifacts for android_debug
+    UploadArtifact(
+        api,
+        config='android_debug',
+        platform='',
+        artifact_name='sky_engine.zip'
+    )
+    UploadArtifact(
+        api,
+        config='android_debug',
+        platform='',
+        artifact_name='android-javadoc.zip'
+    )
+
+  if api.properties.get('build_android_aot', True):
+    BuildMacAndroidAOT(api, swarming_task_id)
 
 def BuildLinuxAndroid(api, swarming_task_id):
   if api.properties.get('build_android_jit_release', True):
@@ -1321,70 +1810,11 @@ def BuildMac(api):
         'flutter/build/archives:flutter_embedder_framework',
         'flutter/build/dart:copy_dart_sdk',
         'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
+        'flutter/build/archives:flutter_patched_sdk',
         'flutter/tools/font-subset', 'flutter:unittests'
     )
     RunTests(api, 'host_debug', types='dart')
 
-    # Host Profile x64
-    RunGN(
-        api, '--runtime-mode', 'profile', '--no-lto', '--prebuilt-dart-sdk',
-        '--build-embedder-examples'
-    )
-    Build(
-        api, 'host_profile', 'flutter/build/archives:archive_gen_snapshot',
-        'flutter/build/archives:artifacts', 'flutter/build/dart:copy_dart_sdk',
-        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
-        'flutter:unittests'
-    )
-    RunTests(api, 'host_profile', types='dart,engine')
-
-    # Host release x64
-    RunGN(
-        api, '--runtime-mode', 'release', '--no-lto', '--prebuilt-dart-sdk',
-        '--build-embedder-examples'
-    )
-    Build(
-        api, 'host_release', 'flutter/build/archives:archive_gen_snapshot',
-        'flutter/build/archives:artifacts', 'flutter/build/dart:copy_dart_sdk',
-        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
-        'flutter:unittests'
-    )
-    RunTests(api, 'host_release', types='dart,engine')
-
-    # Host debug arm64
-    RunGN(
-        api, '--mac', '--mac-cpu', 'arm64', '--runtime-mode', 'debug',
-        '--no-lto', '--prebuilt-dart-sdk'
-    )
-    Build(
-        api, 'mac_debug_arm64', 'flutter/build/archives:archive_gen_snapshot',
-        'flutter/build/archives:artifacts',
-        'flutter/build/archives:dart_sdk_archive',
-        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
-        'flutter/tools/font-subset'
-    )
-
-    # Host profile arm64
-    RunGN(
-        api, '--mac', '--mac-cpu', 'arm64', '--runtime-mode', 'profile',
-        '--no-lto', '--prebuilt-dart-sdk'
-    )
-    Build(
-        api, 'mac_profile_arm64', 'flutter/build/archives:artifacts',
-        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework'
-    )
-
-    # Host release arm64
-    RunGN(
-        api, '--mac', '--mac-cpu', 'arm64', '--runtime-mode', 'release',
-        '--no-lto', '--prebuilt-dart-sdk'
-    )
-    Build(
-        api, 'mac_release_arm64', 'flutter/build/archives:artifacts',
-        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework'
-    )
-
-    # Artifact uploads.
     # Host Debug x64
     UploadArtifact(
         api,
@@ -1411,6 +1841,26 @@ def BuildMac(api):
         artifact_name='font-subset.zip'
     )
 
+    UploadArtifact(
+        api,
+        config='host_debug',
+        platform='',
+        artifact_name='flutter_patched_sdk.zip'
+    )
+
+    # Host Profile x64
+    RunGN(
+        api, '--runtime-mode', 'profile', '--no-lto', '--prebuilt-dart-sdk',
+        '--build-embedder-examples'
+    )
+    Build(
+        api, 'host_profile', 'flutter/build/archives:archive_gen_snapshot',
+        'flutter/build/archives:artifacts', 'flutter/build/dart:copy_dart_sdk',
+        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
+        'flutter:unittests'
+    )
+    RunTests(api, 'host_profile', types='dart,engine')
+
     # Host Profile x64
     UploadArtifact(
         api,
@@ -1420,11 +1870,45 @@ def BuildMac(api):
     )
 
     # Host release x64
+    RunGN(
+        api, '--runtime-mode', 'release', '--no-lto', '--prebuilt-dart-sdk',
+        '--build-embedder-examples'
+    )
+    Build(
+        api, 'host_release', 'flutter/build/archives:archive_gen_snapshot',
+        'flutter/build/archives:artifacts', 'flutter/build/dart:copy_dart_sdk',
+        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
+        'flutter/build/archives:flutter_patched_sdk',
+        'flutter:unittests'
+    )
+    RunTests(api, 'host_release', types='dart,engine')
+
+    # Host release x64
     UploadArtifact(
         api,
         config='host_release',
         platform='darwin-x64-release',
         artifact_name='artifacts.zip'
+    )
+
+    UploadArtifact(
+        api,
+        config='host_release',
+        platform='',
+        artifact_name='flutter_patched_sdk_product.zip'
+    )
+
+    # Host debug arm64
+    RunGN(
+        api, '--mac', '--mac-cpu', 'arm64', '--runtime-mode', 'debug',
+        '--no-lto', '--prebuilt-dart-sdk'
+    )
+    Build(
+        api, 'mac_debug_arm64', 'flutter/build/archives:archive_gen_snapshot',
+        'flutter/build/archives:artifacts',
+        'flutter/build/archives:dart_sdk_archive',
+        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework',
+        'flutter/tools/font-subset'
     )
 
     # Host debug arm64
@@ -1448,11 +1932,31 @@ def BuildMac(api):
     )
 
     # Host profile arm64
+    RunGN(
+        api, '--mac', '--mac-cpu', 'arm64', '--runtime-mode', 'profile',
+        '--no-lto', '--prebuilt-dart-sdk'
+    )
+    Build(
+        api, 'mac_profile_arm64', 'flutter/build/archives:artifacts',
+        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework'
+    )
+
+    # Host profile arm64
     UploadArtifact(
         api,
         config='mac_profile_arm64',
         platform='darwin-arm64-profile',
         artifact_name='artifacts.zip'
+    )
+
+    # Host release arm64
+    RunGN(
+        api, '--mac', '--mac-cpu', 'arm64', '--runtime-mode', 'release',
+        '--no-lto', '--prebuilt-dart-sdk'
+    )
+    Build(
+        api, 'mac_release_arm64', 'flutter/build/archives:artifacts',
+        'flutter/shell/platform/darwin/macos:zip_macos_flutter_framework'
     )
 
     # Host release arm64
@@ -1476,7 +1980,7 @@ def BuildMac(api):
         'darwin-x64-release'
     )
 
-  if api.properties.get('build_android_aot', True):
+  if False and api.properties.get('build_android_aot', True):
     # Profile arm
     RunGN(api, '--runtime-mode', 'profile', '--android')
     Build(
@@ -1928,16 +2432,19 @@ def RunSteps(api, properties, env_properties):
         VerifyExportedSymbols(api)
 
       if api.platform.is_mac:
-        with SetupXcode(api):
-          BuildMac(api)
-          if api.properties.get('build_ios', True):
-            BuildIOS(api, env, env_prefixes)
-          if api.properties.get('build_fuchsia', True):
+        if api.properties.get('build_host', True):
+            BuildMac(api)
+        if env_properties.SKIP_ANDROID != 'TRUE':
+            BuildMacAndroid(api, env_properties.SWARMING_TASK_ID)
+        if api.properties.get('build_fuchsia', True):
             BuildFuchsia(api, gclient_vars)
-          VerifyExportedSymbols(api)
+        VerifyExportedSymbols(api)
 
       if api.platform.is_win:
         BuildWindows(api)
+    except Exception as e:
+      traceback.print_exc()
+      print("########### Exception occurred: ", str(e))
     finally:
       api.logs_util.upload_logs('engine')
       # This is to clean up leaked processes.

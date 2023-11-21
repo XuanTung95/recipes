@@ -1,3 +1,19 @@
+# For building custom engine
+[Setting up the Engine development environment](https://github.com/flutter/flutter/wiki/Setting-up-the-Engine-development-environment)
+
+To build Android artifacts and MacOS host-side executables, execute the following command on MacOS:
+
+`python3 ./recipes.py run --properties-file ./propertites_mac.json engine/engine`
+
+Once the building process is complete, copy `./.recipe_deps/recipe_engine/workdir/cache/custom_engine` to 
+[flutter/bin/custom_engine](https://github.com/XuanTung95/flutter/tree/develop)
+
+For Windows host-side executables, run this command on Windows:
+
+`python3 ./recipes.py run --properties-file ./propertites_win.json engine/engine`
+
+TODO: Linux host-side executables
+
 # Flutter LUCI Recipes
 
 This repository contains Flutter's LUCI recipes. For the LUCI infrastructure
