@@ -2397,8 +2397,9 @@ def RunSteps(api, properties, env_properties):
   api.logs_util.initialize_logs_collection(env)
 
   # Add certificates and print the ones required for pub.
-  api.flutter_deps.certs(env, env_prefixes)
-  api.os_utils.print_pub_certs()
+  if not api.platform.is_win:
+    api.flutter_deps.certs(env, env_prefixes)
+    api.os_utils.print_pub_certs()
 
   # Enable long path support on Windows.
   api.os_utils.enable_long_paths()

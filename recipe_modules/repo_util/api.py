@@ -72,7 +72,7 @@ class RepoUtilApi(recipe_api.RecipeApi):
       env_prefixes(dict): A dictionary with the paths to be added to environment variables.
     """
     # Set vs_toolchain env to cache it.
-    if self.m.platform.is_win:
+    if False and self.m.platform.is_win:
       # Set win toolchain root to a directory inside cache/builder to cache it.
       env['DEPOT_TOOLS_WIN_TOOLCHAIN_ROOT'] = self.m.path['cache'].join(
           'builder', 'vs_toolchain_root'
@@ -90,7 +90,7 @@ class RepoUtilApi(recipe_api.RecipeApi):
     mount_builder = self.m.cache.should_force_mount(
         self.m.path['cache'].join('builder')
     )
-    if (not clobber) and (mount_git or
+    if (not self.m.platform.is_win) and (not clobber) and (mount_git or
                           mount_builder) and (bucket != OFFICIAL_BUILD_BUCKET):
       self.m.cache.mount_cache('builder', force=True)
       self._setup_win_toolchain(env)
@@ -153,7 +153,7 @@ class RepoUtilApi(recipe_api.RecipeApi):
                                                  ] = 'got_engine_revision'
             # Timeout the checkout at 15 mins to fail fast in slow checkouts so we can
             # retry.
-            TIMEOUT_SECS = 15 * 60  # 15 mins.
+            TIMEOUT_SECS = 35 * 60  # 15 mins.
             step_result = self.m.bot_update.ensure_checkout(
                 timeout=TIMEOUT_SECS
             )
