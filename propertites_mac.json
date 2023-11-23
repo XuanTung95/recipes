@@ -7,6 +7,9 @@
   "git_url" : "https://github.com/XuanTung95/engine",
   "git_ref": "refs/heads/flutter-3.16.0",
   "engine_version" : "74d16627b940bb15e50891f82cad6c3e3465bd6d",
+  "gclient_variables": {
+    "release_candidate": true
+  },
   "build_android_vulkan": false,
   "build_fuchsia": false,
   "build_ios": false,
