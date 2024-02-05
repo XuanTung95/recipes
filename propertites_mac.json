@@ -5,8 +5,8 @@
   "build_android_jit_release": false,
   "goma_jobs": "5",
   "git_url" : "https://github.com/XuanTung95/engine",
-  "git_ref": "refs/heads/flutter-3.16.0",
-  "engine_version" : "74d16627b940bb15e50891f82cad6c3e3465bd6d",
+  "git_ref": "refs/heads/flutter-3.16.9",
+  "engine_version" : "f40e976bedff57e69e1b3d89a7c2a3c617a03dad",
   "gclient_variables": {
     "release_candidate": true
   },
